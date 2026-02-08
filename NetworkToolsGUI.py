@@ -8,11 +8,11 @@ import re
 import sqlite3
 
 # Importa as tuas funções externas
-# Certifica-te que os ficheiros SynScan.py, SynFlood.py, UdpFlood.py e port_knocking.py existem
 from SynScan import syn_scan
 from SynFlood import syn_flood
 from UdpFlood import udp_flood
 from port_knocking import execute_knocking, check_ssh_status
+from log_analyzer_cli import analyze_logs_logic, get_db_stats # NOVO IMPORT
 
 class NetworkToolsGUI:
     def __init__(self, root):
@@ -259,7 +259,7 @@ class NetworkToolsGUI:
         self.udp_output.config(state=tk.DISABLED)
 
     # =========================================================================
-    # 4. LOG ANALYZER
+    # 4. LOG ANALYZER)
     # =========================================================================
     def create_log_analyzer_tab(self):
         frame = ttk.Frame(self.notebook)
@@ -268,7 +268,6 @@ class NetworkToolsGUI:
         config_frame = ttk.LabelFrame(frame, text="Configuração", padding=10)
         config_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Podes ajustar estes caminhos para os teus ficheiros reais
         ttk.Label(config_frame, text="Caminho SSH Log:").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.log_ssh_entry = ttk.Entry(config_frame, width=30)
         self.log_ssh_entry.grid(row=0, column=1, sticky=tk.EW, pady=5)
@@ -304,423 +303,42 @@ class NetworkToolsGUI:
         
         self.clear_log_output()
         self.log_button.config(state=tk.DISABLED)
+
+        def run_analysis_thread():
+            # Função para atualizar o texto na GUI (callback)
+            def gui_callback(msg):
+                self.update_log_output(msg)
+
+            # --- AQUI ESTÁ A MAGIA ---
+            # Chama a função que está no ficheiro log_analyzer_cli.py
+            # Isto evita a duplicação de código!
+            success = analyze_logs_logic(ssh_log, ufw_log, callback=gui_callback)
+            
+            if success:
+                self.generate_gui_report()
+            
+            self.log_button.config(state=tk.NORMAL)
         
-        # GeoIP Interno
-        def get_country(ip):
-            import requests
-            if ip.startswith(("127.", "10.", "192.168.")): return "Rede Local"
-            if not hasattr(get_country, 'cache'): get_country.cache = {}
-            if ip in get_country.cache: return get_country.cache[ip]
-            try:
-                time.sleep(0.05)
-                r = requests.get(f"http://ip-api.com/json/{ip}", timeout=2)
-                if r.status_code == 200 and r.json().get('status') == 'success':
-                    c = r.json().get('country', 'Desc.')
-                    get_country.cache[ip] = c
-                    return c
-            except: pass
-            return "Desconhecido"
+        threading.Thread(target=run_analysis_thread, daemon=True).start()
 
-        def run_analysis():
-            conn = None
-            try:
-                self.update_log_output("--- A iniciar análise forense de logs ---")
-                
-                # Timeout aumentado para 10s para evitar "database locked"
-                db_path = "log_analysis.db"
-                conn = sqlite3.connect(db_path, timeout=10)
-                
-                # Ativar Write-Ahead Logging para evitar bloqueios de leitura/escrita
-                conn.execute("PRAGMA journal_mode=WAL")
-                
-                cursor = conn.cursor()
-                cursor.execute("DROP TABLE IF EXISTS log_entries")
-                cursor.execute('''CREATE TABLE log_entries (
-                        id INTEGER PRIMARY KEY, timestamp TEXT, servico TEXT, 
-                        tipo_evento TEXT, user TEXT, ip_origem TEXT, porta_alvo TEXT, pais TEXT)''')
-                conn.commit()
-                
-                total_ssh = 0
-                total_ufw = 0
+    def generate_gui_report(self):
+        """Usa a função auxiliar do CLI para obter dados e mostrar na GUI"""
+        try:
+            stats = get_db_stats() # Função importada do log_analyzer_cli
+            
+            self.update_log_output("\n" + "="*40)
+            self.update_log_output("   RELATÓRIO FINAL (GUI)")
+            self.update_log_output("="*40)
+            self.update_log_output(f"Total Eventos: {stats.get('total', 0)}")
+            
+            self.update_log_output("\n[TOP AMEAÇAS]")
+            for ip in stats.get('top_ips', []):
+                self.update_log_output(f"🔴 {ip['ip']} ({ip['pais']})")
+                self.update_log_output(f"   ↳ {ip['count']} ataques | Porta: {ip['porta']}")
 
-                # --- PROCESSAMENTO SSH ---
-                if os.path.exists(ssh_log):
-                    self.update_log_output(f"\n[SCAN] A ler SSH: {ssh_log}")
-                    regex_fail = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Failed password for (?:invalid user )?(\S+) from (\d+\.\d+\.\d+\.\d+) port (\d+)'
-                    regex_invalid = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Invalid user (\S+) from (\d+\.\d+\.\d+\.\d+)'
-                    
-                    with open(ssh_log, 'r') as f:
-                        for line in f:
-                            match = re.search(regex_fail, line)
-                            if match:
-                                ts, user, ip, port = match.groups()
-                                country = get_country(ip)
-                                cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, user, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?,?)",
-                                             (ts, "SSH", "Falha Password", user, ip, port, country))
-                                total_ssh += 1
-                            else:
-                                match = re.search(regex_invalid, line)
-                                if match:
-                                    ts, user, ip = match.groups()
-                                    country = get_country(ip)
-                                    cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, user, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?,?)",
-                                             (ts, "SSH", "Utilizador Inválido", user, ip, "N/A", country))
-                                    total_ssh += 1
-                            
-                            # Commit a cada 500 linhas para libertar a DB
-                            if total_ssh % 500 == 0: 
-                                conn.commit()
-                                self.update_log_output(f"SSH: {total_ssh} eventos processados...")
-                    conn.commit() # Commit final do SSH
-                
-                # --- PROCESSAMENTO UFW ---
-                if os.path.exists(ufw_log):
-                    self.update_log_output(f"\n[SCAN] A ler UFW: {ufw_log}")
-                    regex_ufw = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*SRC=(\d+\.\d+\.\d+\.\d+).*(?:DPT=(\d+))?.*PROTO=(\w+)'
-                    
-                    with open(ufw_log, 'r') as f:
-                        for line in f:
-                            match = re.search(regex_ufw, line)
-                            if match:
-                                ts, ip, port, proto = match.groups()
-                                if port is None: port = "Variável"
-                                country = get_country(ip)
-                                cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?)",
-                                             (ts, "UFW", f"Bloqueio {proto}", ip, port, country))
-                                total_ufw += 1
-                            
-                            if total_ufw % 200 == 0: 
-                                conn.commit()
-                                self.update_log_output(f"UFW: {total_ufw} eventos processados...")
-                    conn.commit() # Commit final do UFW
-                
-                # ==========================================
-                # GERAÇÃO DO RELATÓRIO
-                # ==========================================
-                self.update_log_output("\n" + "="*50)
-                self.update_log_output("       RELATÓRIO DE AMEAÇAS")
-                self.update_log_output("="*50)
-                
-                cursor.execute("SELECT COUNT(*) FROM log_entries")
-                total = cursor.fetchone()[0]
-                
-                if total == 0:
-                    self.update_log_output("Nenhum dado encontrado.")
-                else:
-                    # 1. TIMELINE
-                    cursor.execute("SELECT MIN(timestamp), MAX(timestamp) FROM log_entries")
-                    times = cursor.fetchone()
-                    self.update_log_output(f"\n[1. PERÍODO ANALISADO]")
-                    self.update_log_output(f"Início: {times[0]}")
-                    self.update_log_output(f"Fim:    {times[1]}")
-                    self.update_log_output(f"Total Eventos: {total}")
+        except Exception as e:
+            self.update_log_output(f"Erro ao ler relatório: {e}")
 
-                    # 2. SERVIÇOS
-                    self.update_log_output(f"\n[2. ALVOS DOS ATAQUES]")
-                    cursor.execute("SELECT servico, COUNT(*) as c FROM log_entries GROUP BY servico ORDER BY c DESC")
-                    for row in cursor.fetchall():
-                        self.update_log_output(f"- {row[0]}: {row[1]} tentativas")
-
-                    # 3. TOP USERNAMES
-                    self.update_log_output(f"\n[3. UTILIZADORES MAIS TENTADOS (Brute-Force)]")
-                    cursor.execute("SELECT user, COUNT(*) as c FROM log_entries WHERE user IS NOT NULL GROUP BY user ORDER BY c DESC LIMIT 5")
-                    rows = cursor.fetchall()
-                    if rows:
-                        for r in rows:
-                            self.update_log_output(f"- '{r[0]}': {r[1]} vezes")
-                    else:
-                        self.update_log_output("(Nenhum nome de utilizador capturado)")
-
-                    # 4. TOP IPs
-                    self.update_log_output(f"\n[4. TOP 5 ATACANTES & ORIGEM]")
-                    cursor.execute("SELECT ip_origem, pais, COUNT(*) as c FROM log_entries GROUP BY ip_origem ORDER BY c DESC LIMIT 5")
-                    top_ips = cursor.fetchall()
-                    
-                    for row in top_ips:
-                        ip, pais, count = row
-                        # Sub-query para porta
-                        cursor.execute("SELECT porta_alvo, COUNT(*) as pc FROM log_entries WHERE ip_origem=? AND porta_alvo != 'N/A' GROUP BY porta_alvo ORDER BY pc DESC LIMIT 1", (ip,))
-                        port_data = cursor.fetchone()
-                        
-                        if port_data:
-                            porta_info = f"Porta principal: {port_data[0]}"
-                        else:
-                            porta_info = "Porta: Várias/Desconhecida"
-                            
-                        self.update_log_output(f"🔴 {ip: <15} ({pais})")
-                        self.update_log_output(f"   ↳ {count} ataques | {porta_info}")
-
-                    # 5. TOP PAÍSES
-                    self.update_log_output(f"\n[5. MAPA DE ORIGEM]")
-                    cursor.execute("SELECT pais, COUNT(*) as c FROM log_entries WHERE pais IS NOT NULL GROUP BY pais ORDER BY c DESC LIMIT 5")
-                    for r in cursor.fetchall():
-                        self.update_log_output(f"- {r[0]}: {r[1]}")
-                
-                self.update_log_output("\nAnálise concluída.")
-                
-            except Exception as e:
-                self.update_log_output(f"ERRO CRÍTICO: {str(e)}")
-                import traceback
-                print(traceback.format_exc())
-            finally:
-                if conn:
-                    conn.close()
-                self.log_button.config(state=tk.NORMAL)
-            try:
-                self.update_log_output("--- A iniciar análise forense de logs ---")
-                
-                conn = sqlite3.connect("log_analysis.db")
-                cursor = conn.cursor()
-                cursor.execute("DROP TABLE IF EXISTS log_entries")
-                cursor.execute('''CREATE TABLE log_entries (
-                        id INTEGER PRIMARY KEY, timestamp TEXT, servico TEXT, 
-                        tipo_evento TEXT, user TEXT, ip_origem TEXT, porta_alvo TEXT, pais TEXT)''')
-                conn.commit()
-                
-                total_ssh = 0
-                total_ufw = 0
-
-                # --- PROCESSAMENTO SSH ---
-                if os.path.exists(ssh_log):
-                    self.update_log_output(f"\n[SCAN] A ler SSH: {ssh_log}")
-                    # Regex 1: Failed password (com porta)
-                    regex_fail = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Failed password for (?:invalid user )?(\S+) from (\d+\.\d+\.\d+\.\d+) port (\d+)'
-                    # Regex 2: Invalid user (sem porta)
-                    regex_invalid = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Invalid user (\S+) from (\d+\.\d+\.\d+\.\d+)'
-                    
-                    with open(ssh_log, 'r') as f:
-                        for line in f:
-                            match = re.search(regex_fail, line)
-                            if match:
-                                ts, user, ip, port = match.groups()
-                                country = get_country(ip)
-                                cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, user, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?,?)",
-                                             (ts, "SSH", "Falha Password", user, ip, port, country))
-                                total_ssh += 1
-                            else:
-                                match = re.search(regex_invalid, line)
-                                if match:
-                                    ts, user, ip = match.groups()
-                                    country = get_country(ip)
-                                    # Marcamos porta como N/A mas o IP conta na mesma
-                                    cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, user, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?,?)",
-                                             (ts, "SSH", "Utilizador Inválido", user, ip, "N/A", country))
-                                    total_ssh += 1
-                            
-                            if total_ssh % 500 == 0: self.update_log_output(f"SSH: {total_ssh} eventos processados...")
-                    conn.commit()
-                
-                # --- PROCESSAMENTO UFW ---
-                if os.path.exists(ufw_log):
-                    self.update_log_output(f"\n[SCAN] A ler UFW: {ufw_log}")
-                    regex_ufw = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*SRC=(\d+\.\d+\.\d+\.\d+).*(?:DPT=(\d+))?.*PROTO=(\w+)'
-                    
-                    with open(ufw_log, 'r') as f:
-                        for line in f:
-                            match = re.search(regex_ufw, line)
-                            if match:
-                                ts, ip, port, proto = match.groups()
-                                if port is None: port = "Variável"
-                                country = get_country(ip)
-                                cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?)",
-                                             (ts, "UFW", f"Bloqueio {proto}", ip, port, country))
-                                total_ufw += 1
-                            if total_ufw % 100 == 0: self.update_log_output(f"UFW: {total_ufw} eventos processados...")
-                    conn.commit()
-                
-                # ==========================================
-                # GERAÇÃO DO RELATÓRIO MELHORADO
-                # ==========================================
-                self.update_log_output("\n" + "="*50)
-                self.update_log_output("       RELATÓRIO DE AMEAÇAS")
-                self.update_log_output("="*50)
-                
-                cursor.execute("SELECT COUNT(*) FROM log_entries")
-                total = cursor.fetchone()[0]
-                
-                if total == 0:
-                    self.update_log_output("Nenhum dado encontrado.")
-                else:
-                    # 1. TIMELINE
-                    cursor.execute("SELECT MIN(timestamp), MAX(timestamp) FROM log_entries")
-                    times = cursor.fetchone()
-                    self.update_log_output(f"\n[1. PERÍODO ANALISADO]")
-                    self.update_log_output(f"Início: {times[0]}")
-                    self.update_log_output(f"Fim:    {times[1]}")
-                    self.update_log_output(f"Total Eventos: {total}")
-
-                    # 2. SERVIÇOS
-                    self.update_log_output(f"\n[2. ALVOS DOS ATAQUES]")
-                    cursor.execute("SELECT servico, COUNT(*) as c FROM log_entries GROUP BY servico ORDER BY c DESC")
-                    for row in cursor.fetchall():
-                        self.update_log_output(f"- {row[0]}: {row[1]} tentativas")
-
-                    # 3. TOP USERNAMES (NOVIDADE IMPORTANTE)
-                    self.update_log_output(f"\n[3. UTILIZADORES MAIS TENTADOS (Brute-Force)]")
-                    cursor.execute("SELECT user, COUNT(*) as c FROM log_entries WHERE user IS NOT NULL GROUP BY user ORDER BY c DESC LIMIT 5")
-                    rows = cursor.fetchall()
-                    if rows:
-                        for r in rows:
-                            self.update_log_output(f"- '{r[0]}': {r[1]} vezes")
-                    else:
-                        self.update_log_output("(Nenhum nome de utilizador capturado)")
-
-                    # 4. TOP IPs (COM LÓGICA DE PORTA MELHORADA)
-                    self.update_log_output(f"\n[4. TOP 5 ATACANTES & ORIGEM]")
-                    # Agrupa apenas por IP para ter o total real
-                    cursor.execute("SELECT ip_origem, pais, COUNT(*) as c FROM log_entries GROUP BY ip_origem ORDER BY c DESC LIMIT 5")
-                    top_ips = cursor.fetchall()
-                    
-                    for row in top_ips:
-                        ip, pais, count = row
-                        
-                        # Sub-query para descobrir a porta mais frequente usada por este IP
-                        cursor.execute("SELECT porta_alvo, COUNT(*) as pc FROM log_entries WHERE ip_origem=? AND porta_alvo != 'N/A' GROUP BY porta_alvo ORDER BY pc DESC LIMIT 1", (ip,))
-                        port_data = cursor.fetchone()
-                        
-                        if port_data:
-                            porta_info = f"Porta principal: {port_data[0]}"
-                        else:
-                            porta_info = "Porta: Várias/Desconhecida"
-                            
-                        self.update_log_output(f"🔴 {ip: <15} ({pais})")
-                        self.update_log_output(f"   ↳ {count} ataques | {porta_info}")
-
-                    # 5. TOP PAÍSES
-                    self.update_log_output(f"\n[5. MAPA DE ORIGEM]")
-                    cursor.execute("SELECT pais, COUNT(*) as c FROM log_entries WHERE pais IS NOT NULL GROUP BY pais ORDER BY c DESC LIMIT 5")
-                    for r in cursor.fetchall():
-                        self.update_log_output(f"- {r[0]}: {r[1]}")
-                
-                conn.close()
-                self.update_log_output("\nAnálise concluída. Podes exportar o PDF.")
-                
-            except Exception as e:
-                self.update_log_output(f"Erro: {e}")
-                import traceback
-                print(traceback.format_exc())
-            finally:
-                self.log_button.config(state=tk.NORMAL)
-        
-        threading.Thread(target=run_analysis, daemon=True).start()
-        ssh_log = self.log_ssh_entry.get()
-        ufw_log = self.log_ufw_entry.get()
-        
-        if not ssh_log and not ufw_log:
-            messagebox.showerror("Erro", "Preencha pelo menos um caminho de log")
-            return
-        
-        self.clear_log_output()
-        self.log_button.config(state=tk.DISABLED)
-        
-        # Helper GeoIP
-        def get_country(ip):
-            import requests
-            if ip.startswith(("127.", "10.", "192.168.")): return "Rede Local"
-            if not hasattr(get_country, 'cache'): get_country.cache = {}
-            if ip in get_country.cache: return get_country.cache[ip]
-            try:
-                time.sleep(0.05)
-                r = requests.get(f"http://ip-api.com/json/{ip}", timeout=2)
-                if r.status_code == 200 and r.json().get('status') == 'success':
-                    c = r.json().get('country', 'Desc.')
-                    get_country.cache[ip] = c
-                    return c
-            except: pass
-            return "Desconhecido"
-
-        def run_analysis():
-            try:
-                self.update_log_output("--- A iniciar análise ---")
-                
-                conn = sqlite3.connect("log_analysis.db")
-                cursor = conn.cursor()
-                cursor.execute("DROP TABLE IF EXISTS log_entries")
-                # Inclui a coluna 'porta_alvo'
-                cursor.execute('''CREATE TABLE log_entries (
-                        id INTEGER PRIMARY KEY, timestamp TEXT, servico TEXT, 
-                        tipo_evento TEXT, user TEXT, ip_origem TEXT, porta_alvo TEXT, pais TEXT)''')
-                conn.commit()
-                
-                total_ssh = 0
-                total_ufw = 0
-
-                # SSH Parsing (COM Regex corrigido para a porta)
-                if os.path.exists(ssh_log):
-                    self.update_log_output(f"\nA ler SSH: {ssh_log}")
-                    # Regex 1: Failed password (com porta)
-                    regex_fail = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Failed password for (?:invalid user )?(\S+) from (\d+\.\d+\.\d+\.\d+) port (\d+)'
-                    # Regex 2: Invalid user (sem porta, assume-se N/A)
-                    regex_invalid = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Invalid user (\S+) from (\d+\.\d+\.\d+\.\d+)'
-                    
-                    with open(ssh_log, 'r') as f:
-                        for line in f:
-                            match = re.search(regex_fail, line)
-                            if match:
-                                ts, user, ip, port = match.groups()
-                                country = get_country(ip)
-                                cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, user, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?,?)",
-                                             (ts, "SSH", "Falha Password", user, ip, port, country))
-                                total_ssh += 1
-                            else:
-                                match = re.search(regex_invalid, line)
-                                if match:
-                                    ts, user, ip = match.groups()
-                                    country = get_country(ip)
-                                    cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, user, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?,?)",
-                                             (ts, "SSH", "Utilizador Inválido", user, ip, "N/A", country))
-                                    total_ssh += 1
-                            
-                            if total_ssh % 200 == 0: self.update_log_output(f"SSH: {total_ssh}...")
-                    conn.commit()
-                
-                # UFW Parsing (CORRIGIDO: Removido o '?' extra)
-                if os.path.exists(ufw_log):
-                    self.update_log_output(f"\nA ler UFW: {ufw_log}")
-                    regex_ufw = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*SRC=(\d+\.\d+\.\d+\.\d+).*(?:DPT=(\d+))?.*PROTO=(\w+)'
-                    
-                    with open(ufw_log, 'r') as f:
-                        for line in f:
-                            match = re.search(regex_ufw, line)
-                            if match:
-                                ts, ip, port, proto = match.groups()
-                                if port is None: port = "N/A"
-                                country = get_country(ip)
-                                # CORREÇÃO AQUI: Eram 7 '?', agora são 6 para bater certo com as 6 colunas
-                                cursor.execute("INSERT INTO log_entries (timestamp, servico, tipo_evento, ip_origem, porta_alvo, pais) VALUES (?,?,?,?,?,?)",
-                                             (ts, "UFW", f"Bloqueio {proto}", ip, port, country))
-                                total_ufw += 1
-                            if total_ufw % 200 == 0: self.update_log_output(f"UFW: {total_ufw}...")
-                    conn.commit()
-                
-                # Relatório
-                self.update_log_output("\n=== RELATÓRIO ===")
-                cursor.execute("SELECT COUNT(*) FROM log_entries")
-                total = cursor.fetchone()[0]
-                self.update_log_output(f"Total Eventos: {total}")
-                
-                # Top IPs com Porta
-                self.update_log_output("\n[TOP 5 IPs & PORTAS ALVO]")
-                cursor.execute("SELECT ip_origem, porta_alvo, COUNT(*) as c FROM log_entries GROUP BY ip_origem, porta_alvo ORDER BY c DESC LIMIT 5")
-                for r in cursor.fetchall():
-                    self.update_log_output(f"{r[0]} (Porta {r[1]}): {r[2]} ataques")
-
-                # Top Países
-                self.update_log_output("\n[TOP 5 PAÍSES]")
-                cursor.execute("SELECT pais, COUNT(*) as c FROM log_entries GROUP BY pais ORDER BY c DESC LIMIT 5")
-                for r in cursor.fetchall():
-                    self.update_log_output(f"{r[0]}: {r[1]}")
-                
-                conn.close()
-                
-            except Exception as e:
-                self.update_log_output(f"Erro: {e}")
-                import traceback
-                print(traceback.format_exc())
-            finally:
-                self.log_button.config(state=tk.NORMAL)
-        
-        threading.Thread(target=run_analysis, daemon=True).start()
     def update_log_output(self, message):
         self.log_output.config(state=tk.NORMAL)
         self.log_output.insert(tk.END, message + "\n")
@@ -748,64 +366,34 @@ class NetworkToolsGUI:
             width, height = letter
             y = height - 50
             
-            # Cabeçalho
             c.setFont("Helvetica-Bold", 18)
-            c.drawString(50, y, "Relatório de Análise Forense")
-            y -= 25
-            c.setFont("Helvetica", 10)
-            c.drawString(50, y, f"Gerado em: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            c.line(50, y-10, width-50, y-10)
+            c.drawString(50, y, "Relatório de Segurança (PDF)")
             y -= 40
             
             conn = sqlite3.connect("log_analysis.db")
             cur = conn.cursor()
             
             # Resumo
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, y, "1. Resumo Executivo")
-            y -= 20
-            c.setFont("Helvetica", 10)
-            
             cur.execute("SELECT COUNT(*) FROM log_entries")
             total = cur.fetchone()[0]
-            cur.execute("SELECT MIN(timestamp), MAX(timestamp) FROM log_entries")
-            times = cur.fetchone()
-            
-            c.drawString(60, y, f"Total Eventos: {total}")
-            y -= 15
-            c.drawString(60, y, f"Período: {times[0]} até {times[1]}")
-            y -= 30
-
-            # Utilizadores
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, y, "2. Top Utilizadores Alvo (Brute-Force)")
+            c.setFont("Helvetica", 12)
+            c.drawString(50, y, f"Total de Eventos: {total}")
             y -= 20
-            c.setFont("Helvetica", 10)
-            cur.execute("SELECT user, COUNT(*) as c FROM log_entries WHERE user IS NOT NULL GROUP BY user ORDER BY c DESC LIMIT 5")
-            for row in cur.fetchall():
-                c.drawString(60, y, f"User '{row[0]}': {row[1]} tentativas")
-                y -= 15
-            y -= 25
-
-            # IPs Atacantes
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, y, "3. Top 10 IPs Atacantes")
-            y -= 20
-            c.setFont("Helvetica", 10)
             
-            cur.execute("SELECT ip_origem, pais, COUNT(*) as c FROM log_entries GROUP BY ip_origem ORDER BY c DESC LIMIT 10")
+            # Top IPs
+            c.drawString(50, y, "Top 5 Atacantes:")
+            y -= 20
+            cur.execute("SELECT ip_origem, pais, COUNT(*) as c FROM log_entries GROUP BY ip_origem ORDER BY c DESC LIMIT 5")
             for row in cur.fetchall():
-                c.drawString(60, y, f"IP: {row[0]:<15} | País: {row[1]:<15} | Ataques: {row[2]}")
+                c.drawString(60, y, f"{row[0]} ({row[1]}) - {row[2]} ataques")
                 y -= 15
-                if y < 50: # Nova página se necessário
-                    c.showPage()
-                    y = height - 50
             
             c.save()
             conn.close()
-            messagebox.showinfo("Sucesso", "Relatório PDF detalhado gerado com sucesso!")
+            messagebox.showinfo("Sucesso", "PDF Gerado!")
         except Exception as e:
             messagebox.showerror("Erro PDF", str(e))
+
     # =========================================================================
     # 5. PORT KNOCKING
     # =========================================================================

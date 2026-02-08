@@ -2,35 +2,33 @@ from scapy.all import IP, TCP, sr1
 
 def syn_scan(target_ip, ports, callback=None):
     """
-    Perform a SYN scan on target IP and ports.
-    
-    Args:
-        target_ip: Target IP address
-        ports: List of ports to scan
-        callback: Optional function to call for progress updates
-        
-    Returns:
-        List of open ports
+    Executa um varrimento SYN (Stealth Scan).
+    Retorna uma lista de portas abertas.
     """
     open_ports = []
     
+    # Loop para percorrer cada porta
     for i, port in enumerate(ports):
+        # Atualiza a GUI a dizer o que está a fazer
         if callback:
             callback(f"Verificando porto {port}...")
         
-        # Criamos um pacote IP com destino ao alvo e um pacote TCP com a flag 'S' (SYN)
+        # Cria pacote IP+TCP com a flag SYN (S)
         packet = IP(dst=target_ip)/TCP(dport=port, flags="S")
         
-        # Enviamos o pacote e esperamos por 1 resposta (timeout de 1s)
+        # Envia e espera 1 resposta (timeout de 1s para não encravar muito tempo)
         response = sr1(packet, timeout=1, verbose=0)
         
         if response:
-            # Se recebermos SYN-ACK (flags=0x12 ou 18), o porto está aberto
+            # Se recebermos SYN-ACK (flags 0x12 ou 18), o porto está ABERTO
             if response.haslayer(TCP) and response.getlayer(TCP).flags == 0x12:
                 open_ports.append(port)
+                
+                # Avisa a GUI que encontrou uma porta
                 if callback:
                     callback(f"[+] Porto {port} está ABERTO")
-                # Enviamos um RST para fechar a ligação educadamente
+                
+                # Envia um RST (Reset) para fechar a conexão imediatamente (Stealth)
                 sr1(IP(dst=target_ip)/TCP(dport=port, flags="R"), timeout=1, verbose=0)
     
     return open_ports
