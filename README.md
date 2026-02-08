@@ -1,191 +1,57 @@
-# Network Tools Suite - Ferramenta de Segurança em Rede
+# LPD - Trabalho Individual: Network Security Toolkit
 
-Ferramenta integrada para análise de segurança em rede, com suporte para:
-- Varrimento SYN (SYN Scan)
-- Ataque UDP Flood
-- Análise de logs de segurança (SSH, HTTP)
-- Geolocalização de IPs
-- Relatórios em PDF
-- Gráficos com matplotlib
-- Base de dados SQLite
+Este repositório contém o Trabalho Individual desenvolvido para a disciplina de **LPD**. O projeto consiste num conjunto de ferramentas de rede desenvolvidas em Python, focadas em testes de segurança, análise de tráfego e monitorização de logs.
 
-## Instalação
+A aplicação oferece duas interfaces de utilização: uma Interface Gráfica (GUI) e uma Interface de Linha de Comando (CLI).
 
+## 📋 Funcionalidades
+
+O toolkit inclui as seguintes ferramentas e módulos:
+
+### 🛡️ Testes de Rede e Segurança
+* **SYN Scan (`SynScan.py`):** Scanner de portas utilizando pacotes SYN para identificar serviços ativos de forma furtiva.
+* **Port Knocking (`port_knocking.py`):** Implementação da técnica de segurança para abrir portas através de uma sequência específica de tentativas de conexão.
+* **Stress Testing (Simulação):**
+    * **SYN Flood (`SynFlood.py`):** Script para teste de stress utilizando pacotes SYN.
+    * **UDP Flood (`UdpFlood.py`):** Script para teste de stress utilizando pacotes UDP.
+
+### 📊 Análise e Monitorização
+* **Log Analyzer (`log_analyzer_cli.py`):** Ferramenta para analisar logs de sistema e firewall.
+    * Suporta análise de `auth.log` (tentativas de login, sudo, etc.).
+    * Suporta análise de `ufw.log` (registos da firewall UFW).
+* **Persistência de Dados:**
+    * Os dados analisados são armazenados em bases de dados SQLite (`log_analysis.db` e `security_logs.db`) para consulta posterior.
+
+## 🚀 Tecnologias Utilizadas
+
+* **Linguagem:** Python 3
+* **Interfaces:**
+    * GUI: Tkinter / CustomTkinter (via `NetworkToolsGUI.py`)
+    * CLI: Command Line Standard (via `main_cli.py`)
+* **Base de Dados:** SQLite3
+
+## 📦 Instalação e Requisitos
+
+Certifique-se de que tem o Python instalado. Recomenda-se o uso de um ambiente virtual.
+
+1.  **Clone o repositório:**
+    ```bash
+    git clone [https://github.com/Tibi-Storage/LPD-TrabalhoIndividual.git](https://github.com/Tibi-Storage/LPD-TrabalhoIndividual.git)
+    cd LPD-TrabalhoIndividual
+    ```
+
+2.  **Instale as dependências:**
+    O projeto possui um ficheiro `requirements.txt`. Instale as bibliotecas necessárias com:
+    ```bash
+    pip install -r requirements.txt
+    ```
+    *(Nota: Scripts como o SynScan ou Flood podem necessitar da biblioteca `scapy` ou `socket` raw, o que pode exigir permissões de administrador/root).*
+
+## ⚙️ Como Utilizar
+
+Existem duas formas principais de interagir com o toolkit:
+
+### 1. Interface Gráfica (Recomendado)
+Para uma utilização visual das ferramentas:
 ```bash
-pip install -r requirements.txt
-```
-
-### Dependências do Sistema (Linux/Kali)
-
-Para SSH logs:
-```bash
-apt-get install openssh-server
-```
-
-Para HTTP logs (Apache):
-```bash
-apt-get install apache2
-```
-
-## Uso
-
-### Interface Gráfica
-
-```bash
-sudo python3 NetworkToolsGUI.py
-```
-
-### Linha de Comando (Log Analyzer)
-
-Analisar logs com GeoIP e base de dados:
-```bash
-python3 log_analyzer_cli.py --analyze --geoip --db
-```
-
-Exportar para CSV:
-```bash
-python3 log_analyzer_cli.py --analyze --export-csv logs.csv
-```
-
-Gerar relatório PDF:
-```bash
-python3 log_analyzer_cli.py --analyze --db --export-pdf report.pdf
-```
-
-Gerar gráficos:
-```bash
-python3 log_analyzer_cli.py --analyze --db --graphics all
-```
-
-Ver ajuda completa:
-```bash
-python3 log_analyzer_cli.py --help
-```
-
-## Funcionalidades
-
-### SYN Scan
-- Varrimento de portos com flag SYN
-- Interface gráfica para configuração
-- Requisitos: `sudo` (privilégios root)
-
-### UDP Flood
-- Envio de pacotes UDP para teste de carga
-- Confirmação de segurança
-- Requisitos: `sudo` (privilégios root)
-
-### Log Analyzer
-- Parse automático de logs SSH e HTTP
-- Geolocalização de IPs (com fallback)
-- Armazenamento em SQLite
-- Exportação em CSV e PDF
-- Gráficos estatísticos
-
-#### Estatísticas Disponíveis
-- Tentativas por serviço
-- Tentativas por tipo de evento
-- Top IPs com mais tentativas
-- Top países com mais tentativas
-- Tentativas bem-sucedidas vs falhadas
-
-#### Relatórios PDF
-- Estatísticas gerais
-- Tabelas de dados
-- Top IPs e países
-
-#### Gráficos
-- Gráficos de barras por serviço
-- Gráficos por tipo de evento
-- Distribuição por país
-- Distribuição por IP
-- Gráficos tipo pizza
-
-## Estrutura do Projeto
-
-```
-/
-├── NetworkToolsGUI.py           # Interface gráfica principal
-├── log_analyzer_cli.py          # Interface de linha de comando
-├── SynScan.py                   # Módulo de SYN scan
-├── UdpFlood.py                  # Módulo de UDP flood
-├── log_analyzer/
-│   ├── __init__.py
-│   ├── log_parser.py            # Parser de logs SSH/HTTP
-│   ├── geoip.py                 # Localização geográfica de IPs
-│   ├── database.py              # Base de dados SQLite
-│   ├── export.py                # Exportação CSV/PDF
-│   └── graphics.py              # Gráficos matplotlib
-└── requirements.txt             # Dependências Python
-```
-
-## Exemplos de Uso
-
-### Análise Completa de Logs
-
-```bash
-# 1. Analisar logs com GeoIP
-python3 log_analyzer_cli.py --analyze --geoip --db
-
-# 2. Exportar para CSV
-python3 log_analyzer_cli.py --export-csv log_analysis.csv
-
-# 3. Gerar PDF com relatório
-python3 log_analyzer_cli.py --export-pdf security_report.pdf
-
-# 4. Gerar gráficos
-python3 log_analyzer_cli.py --graphics all
-
-# 5. Ver estatísticas
-python3 log_analyzer_cli.py --stats
-```
-
-### Via Interface Gráfica
-
-1. Abrir `NetworkToolsGUI.py`
-2. Ir até à aba "Log Analyzer"
-3. Clicar em "Analisar Logs"
-4. Usar os botões para exportar CSV/PDF ou gerar gráficos
-
-## Base de Dados
-
-A base de dados SQLite contém:
-
-### Tabela `log_entries`
-- Timestamp
-- Serviço (SSH, HTTP)
-- IP origem
-- Utilizador
-- Tipo de evento
-- Porto/Status
-- Localização geográfica
-
-### Tabela `ip_statistics`
-- IP address
-- País
-- Total de tentativas
-- Tentativas falhadas
-- Tentativas bem-sucedidas
-
-## Notas de Segurança
-
-⚠️ **Aviso Legal**: Esta ferramenta foi desenvolvida para fins educacionais e de teste em ambientes autorizados.
-
-- SYN Scan e UDP Flood requerem privilégios `root`
-- Apenas use em redes/sistemas que possui permissão
-- Verificar legislação local antes de usar
-
-## Requisitos
-
-- Python 3.8+
-- root/sudo (para SYN Scan e UDP Flood)
-- SSH e/ou Apache/Nginx instalados para logs
-- Bibliotecas: scapy, reportlab, matplotlib
-
-## Melhorias Futuras
-
-- Autenticação de utilizadores
-- Interface web
-- Integração com APIs de GeoIP externas
-- Análise de padrões com ML
-- Alertas em tempo real
-- Mais tipos de logs (Nginx, FTP, etc.)
+python NetworkToolsGUI.py
