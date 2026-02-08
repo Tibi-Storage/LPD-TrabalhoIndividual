@@ -1,57 +1,61 @@
-# LPD - Trabalho Individual: Network Security Toolkit
+# Network Tools Suite - LPD 🛡️
 
-Este repositório contém o Trabalho Individual desenvolvido para a disciplina de **LPD**. O projeto consiste num conjunto de ferramentas de rede desenvolvidas em Python, focadas em testes de segurança, análise de tráfego e monitorização de logs.
+Este repositório contém o trabalho individual desenvolvido para a unidade curricular de **Linguagens de Programação Dinâmicas (LPD)** no Mestrado de Segurança Informática. Trata-se de um toolkit modular de rede, integrando ferramentas de auditoria, testes de carga e análise forense.
 
-A aplicação oferece duas interfaces de utilização: uma Interface Gráfica (GUI) e uma Interface de Linha de Comando (CLI).
+## 🚀 Funcionalidades Principais
 
-## 📋 Funcionalidades
+O projeto está dividido em quatro módulos core:
 
-O toolkit inclui as seguintes ferramentas e módulos:
+1.  **SYN Scan (`SynScan.py`):** Realiza varrimentos de portas utilizando a técnica *Stealth Scan* (Half-open), enviando pacotes SYN e fechando a conexão com RST para evitar logs excessivos no alvo.
+2.  **Stress Testing (DoS Simulation):**
+    * `SynFlood.py`: Inunda o alvo com pacotes SYN e IPs falsificados (*spoofing*).
+    * `UdpFlood.py`: Envia pacotes UDP de alta frequência com payloads aleatórios.
+3.  **Port Knocking (`port_knocking.py`):** Cliente para validação de sequências de "batidas" em portas fechadas para gestão de acesso dinâmico (ex: abrir porta SSH).
+4.  **Log Analyzer (`log_analyzer_cli.py`):** Motor de análise que processa logs do sistema (`auth.log`) e da firewall (`ufw.log`), identificando ataques e armazenando estatísticas em base de dados SQLite.
 
-### 🛡️ Testes de Rede e Segurança
-* **SYN Scan (`SynScan.py`):** Scanner de portas utilizando pacotes SYN para identificar serviços ativos de forma furtiva.
-* **Port Knocking (`port_knocking.py`):** Implementação da técnica de segurança para abrir portas através de uma sequência específica de tentativas de conexão.
-* **Stress Testing (Simulação):**
-    * **SYN Flood (`SynFlood.py`):** Script para teste de stress utilizando pacotes SYN.
-    * **UDP Flood (`UdpFlood.py`):** Script para teste de stress utilizando pacotes UDP.
+## 🖥️ Interfaces de Utilização
 
-### 📊 Análise e Monitorização
-* **Log Analyzer (`log_analyzer_cli.py`):** Ferramenta para analisar logs de sistema e firewall.
-    * Suporta análise de `auth.log` (tentativas de login, sudo, etc.).
-    * Suporta análise de `ufw.log` (registos da firewall UFW).
-* **Persistência de Dados:**
-    * Os dados analisados são armazenados em bases de dados SQLite (`log_analysis.db` e `security_logs.db`) para consulta posterior.
+O toolkit oferece flexibilidade total através de duas interfaces:
 
-## 🚀 Tecnologias Utilizadas
+* **Interface Gráfica (GUI):** Executada via `NetworkToolsGUI.py`, oferece uma experiência visual com suporte a multi-threading para não bloquear a interface durante os scans. Permite a exportação de relatórios em PDF.
+* **Linha de Comando (CLI):** Executada via `main_cli.py`, ideal para automação e utilização em servidores via SSH.
 
-* **Linguagem:** Python 3
-* **Interfaces:**
-    * GUI: Tkinter / CustomTkinter (via `NetworkToolsGUI.py`)
-    * CLI: Command Line Standard (via `main_cli.py`)
+## 🛠️ Tecnologias e Bibliotecas
+
+* **Linguagem:** Python 3.x
+* **Manipulação de Pacotes:** [Scapy](https://scapy.net/)
+* **Interface Visual:** Tkinter / ttk
 * **Base de Dados:** SQLite3
+* **Relatórios:** ReportLab (para exportação em PDF)
 
-## 📦 Instalação e Requisitos
+## 📦 Instalação e Execução
 
-Certifique-se de que tem o Python instalado. Recomenda-se o uso de um ambiente virtual.
+### Pré-requisitos
+Devido à utilização do Scapy para manipulação de pacotes raw, este projeto deve ser executado em ambiente **Linux** com privilégios de **root**.
 
-1.  **Clone o repositório:**
-    ```bash
-    git clone [https://github.com/Tibi-Storage/LPD-TrabalhoIndividual.git](https://github.com/Tibi-Storage/LPD-TrabalhoIndividual.git)
-    cd LPD-TrabalhoIndividual
-    ```
-
-2.  **Instale as dependências:**
-    O projeto possui um ficheiro `requirements.txt`. Instale as bibliotecas necessárias com:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    *(Nota: Scripts como o SynScan ou Flood podem necessitar da biblioteca `scapy` ou `socket` raw, o que pode exigir permissões de administrador/root).*
-
-## ⚙️ Como Utilizar
-
-Existem duas formas principais de interagir com o toolkit:
-
-### 1. Interface Gráfica (Recomendado)
-Para uma utilização visual das ferramentas:
 ```bash
-python NetworkToolsGUI.py
+# Instalar dependências
+sudo pip install -r requirements.txt
+Como executar
+Para iniciar a Interface Gráfica:
+
+Bash
+sudo python NetworkToolsGUI.py
+Para utilizar a CLI:
+
+Bash
+# Exemplo de scan de portas
+sudo python main_cli.py scan 192.168.1.1 -p 22,80,443
+
+# Exemplo de análise de logs
+sudo python main_cli.py logs --ssh auth.log --ufw ufw.log
+
+NetworkToolsGUI.py: Ponto de entrada da aplicação gráfica.
+
+main_cli.py: Ponto de entrada da aplicação via terminal.
+
+
+auth.log / ufw.log: Ficheiros de exemplo para teste do analisador.
+
+⚠️ Aviso Legal (Disclaimer)
+Este projeto foi desenvolvido estritamente para fins académicos e pedagógicos. O autor não se responsabiliza pelo uso indevido destas ferramentas. Realizar ataques de negação de serviço ou varrimentos sem autorização em redes alheias é ilegal.
