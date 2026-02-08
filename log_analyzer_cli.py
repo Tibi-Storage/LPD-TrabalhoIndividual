@@ -1,171 +1,181 @@
-#!/usr/bin/env python3
-"""
-Log Analyzer CLI - Interface de linha de comando para análise de logs
-"""
+import re
+import requests
+import sqlite3
+import time
+import os
 
-import argparse
-import sys
-from log_analyzer.log_parser import LogAnalyzer
-from log_analyzer.geoip import GeoIPDatabase
-from log_analyzer.database import LogDatabase
-from log_analyzer.export import CSVExporter, PDFExporter
-from log_analyzer.graphics import GraphicsGenerator
+# --- CONFIGURAÇÃO ---
+LOG_FILES = {
+    'ssh': 'auth.log',
+    'ufw': 'ufw.log'
+}
+DB_NAME = 'security_logs.db'
 
+# --- 1. FUNÇÃO DE GEOLOCALIZAÇÃO ---
+geo_cache = {}
+
+def get_country(ip):
+    if ip.startswith("127.") or ip.startswith("10.") or ip.startswith("192.168."):
+        return "Rede Local (LAN)"
+    
+    if ip in geo_cache:
+        return geo_cache[ip]
+    
+    try:
+        time.sleep(0.1) 
+        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=3)
+        data = response.json()
+        if data['status'] == 'success':
+            country = data['country']
+            geo_cache[ip] = country
+            return country
+    except:
+        return "Erro API"
+    
+    return "Desconhecido"
+
+# --- 2. CONFIGURAÇÃO DA BASE DE DADOS ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ataques (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            servico TEXT,
+            tipo_evento TEXT,
+            user TEXT,
+            ip_origem TEXT,
+            porta_alvo TEXT,
+            pais TEXT
+        )
+    ''')
+    conn.commit()
+    return conn
+
+# --- 3. PARSER PARA SSH (auth.log) ---
+def parse_ssh(filepath, conn):
+    print(f"--- A processar {filepath} (SSH) ---")
+    if not os.path.exists(filepath):
+        print(f"Ficheiro {filepath} não encontrado.")
+        return
+
+    regex_fail = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Failed password for (?:invalid user )?(\S+) from (\d+\.\d+\.\d+\.\d+)'
+    regex_invalid = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*Invalid user (\S+) from (\d+\.\d+\.\d+\.\d+)'
+    
+    count = 0
+    cursor = conn.cursor()
+    
+    with open(filepath, 'r') as f:
+        for line in f:
+            user, ip, ts, event = None, None, None, None
+            
+            match = re.search(regex_fail, line)
+            if match:
+                ts, user, ip = match.groups()
+                event = "Falha Password"
+            else:
+                match = re.search(regex_invalid, line)
+                if match:
+                    ts, user, ip = match.groups()
+                    event = "Utilizador Inválido"
+
+            if ip:
+                country = get_country(ip)
+                cursor.execute("INSERT INTO ataques (timestamp, servico, tipo_evento, user, ip_origem, pais) VALUES (?, ?, ?, ?, ?, ?)",
+                               (ts, "SSH", event, user, ip, country))
+                count += 1
+                
+                # CORREÇÃO AQUI: Usar 'print' e a variável 'count' correta
+                if count % 10 == 0: 
+                    print(f"SSH processados: {count}...", end='\r')
+
+    conn.commit()
+    print(f"\nTotal SSH processado: {count}")
+
+# --- 4. PARSER PARA FIREWALL (ufw.log) ---
+# --- 4. PARSER PARA FIREWALL (ufw.log) CORRIGIDO ---
+def parse_ufw(filepath, conn):
+    print(f"--- A processar {filepath} (UFW) ---")
+    if not os.path.exists(filepath):
+        print(f"Ficheiro {filepath} não encontrado.")
+        return
+
+    # CORREÇÃO: DPT agora é opcional -> (?:DPT=(\d+))?
+    regex_ufw = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*SRC=(\d+\.\d+\.\d+\.\d+).*(?:DPT=(\d+))?.*PROTO=(\w+)'
+    
+    count = 0
+    cursor = conn.cursor()
+    
+    with open(filepath, 'r') as f:
+        for line in f:
+            match = re.search(regex_ufw, line)
+            if match:
+                ts, ip, port, proto = match.groups()
+                
+                # Se não houver porta (ex: PROTO=2), define como N/A ou 0
+                if port is None:
+                    port = "N/A"
+                
+                country = get_country(ip)
+                
+                cursor.execute("INSERT INTO ataques (timestamp, servico, tipo_evento, ip_origem, porta_alvo, pais) VALUES (?, ?, ?, ?, ?, ?)",
+                               (ts, "UFW/Firewall", f"Bloqueio {proto}", ip, port, country))
+                count += 1
+                if count % 10 == 0: 
+                    print(f"Processados {count} eventos UFW...", end='\r')
+
+    conn.commit()
+    print(f"\nTotal UFW processado: {count}")
+    print(f"--- A processar {filepath} (UFW) ---")
+    if not os.path.exists(filepath):
+        print(f"Ficheiro {filepath} não encontrado.")
+        return
+
+    regex_ufw = r'^([A-Z][a-z]{2}\s+\d+\s\d+:\d+:\d+).*SRC=(\d+\.\d+\.\d+\.\d+).*DPT=(\d+).*PROTO=(\w+)'
+    
+    count = 0
+    cursor = conn.cursor()
+    
+    with open(filepath, 'r') as f:
+        for line in f:
+            match = re.search(regex_ufw, line)
+            if match:
+                ts, ip, port, proto = match.groups()
+                country = get_country(ip)
+                
+                cursor.execute("INSERT INTO ataques (timestamp, servico, tipo_evento, ip_origem, porta_alvo, pais) VALUES (?, ?, ?, ?, ?, ?)",
+                               (ts, "UFW/Firewall", f"Bloqueio {proto}", ip, port, country))
+                count += 1
+                if count % 10 == 0: 
+                    print(f"Processados {count} eventos UFW...", end='\r')
+
+    conn.commit()
+    print(f"\nTotal UFW processado: {count}")
+
+# --- 5. RELATÓRIO FINAL ---
+def gerar_relatorio(conn):
+    cursor = conn.cursor()
+    print("\n\n=== RELATÓRIO DE SEGURANÇA ===")
+    
+    # Top 5 Países de Origem
+    print("\nTOP 5 PAÍSES ATACANTES:")
+    cursor.execute("SELECT pais, COUNT(*) as c FROM ataques GROUP BY pais ORDER BY c DESC LIMIT 5")
+    for row in cursor.fetchall():
+        print(f"{row[0]}: {row[1]} tentativas")
+
+    # Top 5 IPs
+    print("\nTOP 5 IPs ATACANTES:")
+    cursor.execute("SELECT ip_origem, pais, COUNT(*) as c FROM ataques GROUP BY ip_origem ORDER BY c DESC LIMIT 5")
+    for row in cursor.fetchall():
+        print(f"{row[0]} ({row[1]}): {row[2]} tentativas")
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Log Analyzer - Ferramenta de análise de logs de segurança',
-        epilog='Exemplos:\n'
-               '  python3 log_analyzer_cli.py --analyze --geoip --db\n'
-               '  python3 log_analyzer_cli.py --export-csv logs.csv\n'
-               '  python3 log_analyzer_cli.py --export-pdf report.pdf\n'
-               '  python3 log_analyzer_cli.py --graphics all',
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    
-    parser.add_argument('--analyze', action='store_true', 
-                       help='Analisa SSH e HTTP logs')
-    parser.add_argument('--geoip', action='store_true',
-                       help='Realiza lookup GeoIP para IPs encontrados')
-    parser.add_argument('--db', action='store_true',
-                       help='Armazena dados em base de dados SQLite')
-    parser.add_argument('--db-file', default='security_logs.db',
-                       help='Caminho do ficheiro SQLite (padrão: security_logs.db)')
-    parser.add_argument('--export-csv', metavar='FILE',
-                       help='Exporta dados para CSV')
-    parser.add_argument('--export-pdf', metavar='FILE',
-                       help='Exporta relatório para PDF')
-    parser.add_argument('--graphics', choices=['service', 'event', 'country', 'ip', 'pie', 'all'],
-                       help='Gera gráficos')
-    parser.add_argument('--stats', action='store_true',
-                       help='Mostra estatísticas gerais')
-    parser.add_argument('--verbose', '-v', action='store_true',
-                       help='Modo verboso')
-    
-    args = parser.parse_args()
-    
-    # Se nenhum argumento fornecido, mostrar ajuda
-    if len(sys.argv) == 1:
-        parser.print_help()
-        return
-    
-    # Análise
-    if args.analyze:
-        print("[*] Analisando logs...")
-        analyzer = LogAnalyzer()
-        ssh_entries, http_entries = analyzer.analyze_all()
-        
-        print(f"[+] SSH: {len(ssh_entries)} entradas encontradas")
-        print(f"[+] HTTP: {len(http_entries)} entradas encontradas")
-        
-        all_entries = ssh_entries + http_entries
-        
-        # GeoIP Lookup
-        if args.geoip:
-            print("[*] Realizando GeoIP lookup...")
-            geoip = GeoIPDatabase()
-            
-            ips = set()
-            for entry in all_entries:
-                ips.add(entry.get('ip'))
-            
-            geo_data = geoip.batch_lookup(list(ips))
-            
-            # Adicionar informações de país aos entries
-            for entry in all_entries:
-                ip_info = geo_data.get(entry.get('ip'), {})
-                entry['country_code'] = ip_info.get('country', 'XX')
-                entry['country_name'] = ip_info.get('country_name', 'Unknown')
-                
-                if args.verbose:
-                    print(f"  {entry.get('ip')} -> {entry.get('country_name')}")
-        
-        # Database
-        if args.db:
-            print(f"[*] Armazenando em base de dados: {args.db_file}")
-            db = LogDatabase(args.db_file)
-            
-            count = db.insert_entries(all_entries)
-            print(f"[+] {count} entradas inseridas na base de dados")
-            
-            # Atualizar estatísticas de IP
-            for entry in all_entries:
-                db.update_ip_statistics(
-                    entry.get('ip'),
-                    entry.get('country_code', 'XX'),
-                    entry.get('country_name', 'Unknown'),
-                    entry.get('event_type', '')
-                )
-        
-        # Exportar CSV
-        if args.export_csv:
-            print(f"[*] Exportando para CSV: {args.export_csv}")
-            CSVExporter.export_entries(all_entries, args.export_csv)
-        
-        # Exportar PDF
-        if args.export_pdf or args.graphics:
-            db = LogDatabase(args.db_file)
-            stats = db.get_statistics()
-            
-            if args.export_pdf:
-                print(f"[*] Gerando relatório PDF: {args.export_pdf}")
-                PDFExporter.export_report(all_entries, stats, args.export_pdf)
-            
-            # Gráficos
-            if args.graphics:
-                print("[*] Gerando gráficos...")
-                graphics_gen = GraphicsGenerator()
-                top_ips = db.get_top_ips()
-                top_countries = db.get_top_countries()
-                
-                if args.graphics in ['service', 'all']:
-                    graphics_gen.plot_events_by_service(stats)
-                    graphics_gen.plot_pie_services(stats)
-                
-                if args.graphics in ['event', 'all']:
-                    graphics_gen.plot_events_by_type(stats)
-                
-                if args.graphics in ['country', 'all']:
-                    graphics_gen.plot_top_countries(top_countries)
-                
-                if args.graphics in ['ip', 'all']:
-                    graphics_gen.plot_top_ips(top_ips)
-        
-        # Estatísticas
-        if args.stats:
-            db = LogDatabase(args.db_file)
-            stats = db.get_statistics()
-            
-            print("\n=== ESTATÍSTICAS GERAIS ===")
-            print(f"Total de entradas: {stats['total_entries']}")
-            print(f"IPs únicos: {stats['unique_ips']}")
-            
-            print("\nPor Serviço:")
-            for service, count in stats['by_service'].items():
-                print(f"  {service}: {count}")
-            
-            print("\nPor Tipo de Evento:")
-            for event, count in stats['by_event'].items():
-                print(f"  {event}: {count}")
-    
-    # Apenas estatísticas
-    elif args.stats:
-        db = LogDatabase(args.db_file)
-        stats = db.get_statistics()
-        
-        print("\n=== ESTATÍSTICAS ===")
-        print(f"Total de entradas: {stats['total_entries']}")
-        print(f"IPs únicos: {stats['unique_ips']}")
-        
-        print("\nPor Serviço:")
-        for service, count in stats['by_service'].items():
-            print(f"  {service}: {count}")
-        
-        print("\nTop IPs:")
-        top_ips = db.get_top_ips(5)
-        for ip in top_ips:
-            print(f"  {ip['ip_address']}: {ip['total_attempts']} tentativas ({ip['country_name']})")
+    conn = init_db()
+    parse_ssh(LOG_FILES['ssh'], conn)
+    parse_ufw(LOG_FILES['ufw'], conn)
+    gerar_relatorio(conn)
+    conn.close()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
